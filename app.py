@@ -3,110 +3,116 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import confusion_matrix, accuracy_score
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.cluster import DBSCAN
 
-# Configuração da página em modo compacto
+# Configuração da página do Streamlit
 st.set_page_config(
-    page_title="Dashboard Preditivo Compacto",
-    page_icon="⚡",
+    page_title="Dashboard de Manutenção Preditiva",
+    page_icon="⚙️",
     layout="wide"
 )
 
-# Estilo CSS para compactar o espaçamento
-st.markdown("""
-    <style>
-    .block-container { padding-top: 1.5rem; padding-bottom: 1.5rem; }
-    .stMetric { background-color: #f1f3f5; padding: 10px; border-radius: 8px; text-align: center; }
-    </style>
-""", unsafe_allow_html=True)
+st.title("⚙️ Dashboard de Manutenção Preditiva")
+st.markdown(
+    "Monitoramento de sensores de chão de fábrica e detecção automática de anomalias utilizando o algoritmo **DBSCAN**."
+)
 
-st.title("⚡ Dashboard Compacto de Manutenção Preditiva")
-
-# Controlo na barra lateral para gerar novos dados aleatórios
-st.sidebar.header("⚙️ Controlos")
-if st.sidebar.button("🔄 Gerar Novos Dados Aleatórios"):
-    st.cache_data.clear()
-
-# 1. Geração de Dados Aleatórios
+# 1. Geração de Dados com NumPy
 @st.cache_data
-def gerar_dados_aleatorios():
-    np.random.seed(None) # Garante aleatoriedade real
-    n = 40
+def carregar_dados():
+    np.random.seed(42)
+    n_samples = 350
     
-    # Dados aleatórios para cada categoria
-    v_apr = np.random.uniform(30, 45, n)
-    t_apr = np.random.uniform(50, 65, n)
+    # Dados normais (funcionamento padrão das máquinas)
+    vibracao_normal = np.random.normal(loc=50, scale=4.5, size=n_samples)
+    temperatura_normal = np.random.normal(loc=70, scale=5.0, size=n_samples)
     
-    v_ret = np.random.uniform(50, 65, n)
-    t_ret = np.random.uniform(70, 85, n)
+    # Inclusão intencional de outliers (anomalias)
+    n_outliers = 20
+    vibracao_outliers = np.random.uniform(low=20, high=95, size=n_outliers)
+    temperatura_outliers = np.random.uniform(low=45, high=105, size=n_outliers)
     
-    v_ref = np.random.uniform(70, 95, n)
-    t_ref = np.random.uniform(85, 105, n)
+    # Concatenando os dados
+    vibracao = np.concatenate([vibracao_normal, vibracao_outliers])
+    temperatura = np.concatenate([temperatura_normal, temperatura_outliers])
     
-    vibracao = np.concatenate([v_apr, v_ret, v_ref])
-    temperatura = np.concatenate([t_apr, t_ret, t_ref])
-    classes = ['Aprovada']*n + ['Retrabalho']*n + ['Refugo']*n
+    # Identificadores das máquinas
+    maquinas = [f"Maquina_{i+1:03d}" for i in range(len(vibracao))]
     
     df = pd.DataFrame({
-        'Maquina': [f"Máq {i+1:02d}" for i in range(len(vibracao))],
-        'Vibracao': vibracao,
-        'Temperatura': temperatura,
-        'Status_Real': classes
+        'Maquina': maquinas,
+        'Frequencia_Vibracao': vibracao,
+        'Pico_Temperatura': temperatura
     })
     return df
 
-df = gerar_dados_aleatorios()
+df_sensores = carregar_dados()
 
-# Modelo para garantir 100% de precisão nos dados gerados
-X = df[['Vibracao', 'Temperatura']]
-y = df['Status_Real']
-model = RandomForestClassifier(n_estimators=20, random_state=42)
-model.fit(X, y)
-df['Status_Predito'] = model.predict(X)
-acuracia = accuracy_score(df['Status_Real'], df['Status_Predito']) * 100
+# 2. Controles na Barra Lateral (Sidebar) para ajustar o DBSCAN
+st.sidebar.header("🔧 Parâmetros do DBSCAN")
+eps_val = st.sidebar.slider(
+    "Eps (Raio da vizinhança)", 
+    min_value=0.5, max_value=5.0, value=1.8, step=0.1,
+    help="Define a distância máxima entre duas amostras para que uma seja considerada no Vizinhança da outra."
+)
+min_samples_val = st.sidebar.slider(
+    "Min Samples (Mínimo de pontos)", 
+    min_value=2, max_value=15, value=5, step=1,
+    help="Número de amostras em uma vizinhança para que um ponto seja considerado um núcleo."
+)
 
-# 2. Métricas Compactas numa única linha
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Total", len(df))
-c2.metric("Aprovadas", len(df[df['Status_Real'] == 'Aprovada']))
-c3.metric("Retrabalho", len(df[df['Status_Real'] == 'Retrabalho']))
-c4.metric("Refugo", len(df[df['Status_Real'] == 'Refugo']))
-c5.metric("Acurácia", f"{acuracia:.0f}%")
+# 3. Processamento com DBSCAN
+X = df_sensores[['Frequencia_Vibracao', 'Pico_Temperatura']]
+dbscan = DBSCAN(eps=eps_val, min_samples=min_samples_val)
+df_sensores['Cluster'] = dbscan.fit_predict(X)
 
+# 4. Layout Principal: Gráfico de Dispersão
+st.subheader("📊 Comportamento dos Sensores de Chão de Fábrica")
+
+fig, ax = plt.subplots(figsize=(10, 6))
+
+# Mapeamento de cores: Outliers (-1) ficam em preto, clusters normais ganham cores da paleta
+clusters_unicos = sorted(df_sensores['Cluster'].unique())
+palette = sns.color_palette("Set2", n_colors=len(clusters_unicos) - (1 if -1 in clusters_unicos else 0))
+
+color_map = {}
+palette_idx = 0
+for cluster in clusters_unicos:
+    if cluster == -1:
+        color_map[cluster] = 'black'  # Outliers destacados em preto
+    else:
+        color_map[cluster] = palette[palette_idx % len(palette)]
+        palette_idx += 1
+
+sns.scatterplot(
+    data=df_sensores,
+    x='Frequencia_Vibracao',
+    y='Pico_Temperatura',
+    hue='Cluster',
+    palette=color_map,
+    style='Cluster',
+    s=70,
+    ax=ax,
+    edgecolor='w',
+    linewidth=0.5
+)
+
+ax.set_title("Agrupamento e Detecção de Anomalias (DBSCAN)", fontsize=14, fontweight='bold')
+ax.set_xlabel("Frequência de Vibração (Hz)", fontsize=12)
+ax.set_ylabel("Pico de Temperatura (°C)", fontsize=12)
+ax.legend(title="Clusters / Anomalias (-1)", bbox_to_anchor=(1.05, 1), loc='upper left')
+ax.grid(True, linestyle='--', alpha=0.5)
+
+st.pyplot(fig)
+
+# 5. Tabela Interativa de Anomalias
 st.markdown("---")
+st.subheader("⚠️ Máquinas Consideradas Anômalas")
 
-# 3. Layout Compacto Lado a Lado (Gráficos e Tabela)
-col_esq, col_dir = st.columns(2)
+df_anomalias = df_sensores[df_sensores['Cluster'] == -1]
 
-classes_ordenadas = ["Aprovada", "Retrabalho", "Refugo"]
-
-with col_esq:
-    st.subheader("🎯 Matriz de Confusão")
-    fig_cm, ax_cm = plt.subplots(figsize=(5, 3.5))
-    cm = confusion_matrix(df['Status_Real'], df['Status_Predito'], labels=classes_ordenadas)
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False,
-                xticklabels=classes_ordenadas, yticklabels=classes_ordenadas,
-                annot_kws={"size": 12, "weight": "bold"}, ax=ax_cm)
-    ax_cm.set_xlabel("Predito", fontsize=10)
-    ax_cm.set_ylabel("Real", fontsize=10)
-    plt.tight_layout()
-    st.pyplot(fig_cm)
-
-with col_dir:
-    st.subheader("📊 Dispersão de Sensores")
-    fig_sc, ax_sc = plt.subplots(figsize=(5, 3.5))
-    sns.scatterplot(
-        data=df, x='Vibracao', y='Temperatura', hue='Status_Real',
-        palette={'Aprovada': '#2ecc71', 'Retrabalho': '#f39c12', 'Refugo': '#e74c3c'},
-        s=50, ax=ax_sc
-    )
-    ax_sc.set_xlabel("Vibração (Hz)", fontsize=10)
-    ax_sc.set_ylabel("Temperatura (°C)", fontsize=10)
-    ax_sc.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=8)
-    plt.tight_layout()
-    st.pyplot(fig_sc)
-
-# 4. Tabela Compacta Ocultável/Expansível
-with st.expander("📋 Ver Tabela de Dados Detalhada"):
-    st.dataframe(df[['Maquina', 'Vibracao', 'Temperatura', 'Status_Real']].reset_index(drop=True), use_container_width=True, height=200)
+if not df_anomalias.empty:
+    st.warning(f"Atenção! Foram identificadas **{len(df_anomalias)}** máquinas com comportamento fora do padrão sob os parâmetros atuais.")
+    st.dataframe(df_anomalias.reset_index(drop=True), use_container_width=True)
+else:
+    st.success("Tudo em ordem! Nenhuma anomalia (outlier) foi detectada com os parâmetros atuais.")
